@@ -16,87 +16,403 @@ const sample = `date,type,semester,subject,score,full_score,class_rank,grade_ran
 ---
 <Base title="导入成绩 · 成绩看板" active="import">
   <h1>导入成绩</h1>
-  <p class="muted" style="margin-bottom:20px;">
-    支持 CSV。表头: <code>date,type,semester,subject,score,full_score,class_rank,grade_rank,total_score,class_size,grade_size,notes</code>。<br>
-    同一日期 + 学期 + 学生会合并到同一次考试。先 <strong>校验预览</strong>,确认无误再导入。
-  </p>
 
   {students.length === 0 ? (
     <div class="card" style="text-align:center;">
       <p>还没有学生,先去 <a href="/">首页</a> 添加一个。</p>
     </div>
   ) : (
-    <form method="post" action="/api/student" class="card" style="display:grid;gap:12px;">
-      <input type="hidden" name="_action" value="import" />
-      <label>学生
-        <select name="student_id" required>
-          {students.map((s) => <option value={s.id}>{s.name} {s.grade && `(${s.grade})`}</option>)}
-        </select>
-      </label>
-      <label>CSV 内容
-        <textarea id="csv-text" name="csv" rows="14" required style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;">{sample}</textarea>
-      </label>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <button type="button" id="btn-preview" style="background:var(--card);">🔍 校验预览</button>
-        <button type="submit">📥 直接导入</button>
-        <button type="button" id="btn-import-after-preview" style="display:none;background:var(--accent);color:#fff;border-color:var(--accent);">✅ 确认导入</button>
+    <>
+      {/* Tab 切换 */}
+      <div style="display:flex;gap:0;border-bottom:2px solid var(--line);margin-bottom:18px;">
+        <button type="button" class="tab-btn tab-active" data-tab="csv">📝 CSV 文本</button>
+        <button type="button" class="tab-btn" data-tab="image">📷 上传图片 (AI 识别)</button>
       </div>
 
-      <div id="preview-out" style="display:none;"></div>
-
-      <details>
-        <summary class="muted" style="cursor:pointer;">示例数据(包含 1 行超满分 + 1 行未来日期用来测试校验)</summary>
-        <pre style="background:var(--bg);padding:10px;border-radius:6px;overflow:auto;font-size:11px;">{sample}</pre>
-      </details>
-    </form>
-  )}
-
-  <script is:inline>
-    const csvText = document.getElementById('csv-text');
-    const btnPreview = document.getElementById('btn-preview');
-    const btnImportAfter = document.getElementById('btn-import-after-preview');
-    const out = document.getElementById('preview-out');
-    if (btnPreview) {
-      btnPreview.addEventListener('click', async () => {
-        out.style.display = 'block';
-        out.innerHTML = '<p class="muted">校验中...</p>';
-        const csv = csvText.value;
-        const studentId = document.querySelector('select[name="student_id"]').value;
-        try {
-          const fd = new FormData();
-          fd.append('csv', csv);
-          fd.append('student_id', studentId);
-          const r = await fetch('/api/import', { method: 'POST', body: fd });
-          const j = await r.json();
-          if (!j.ok) {
-            out.innerHTML = `<div class="card" style="border-color:var(--bad);background:#fbeae5;">❌ 解析失败:<br>${(j.errors || []).join('<br>')}</div>`;
-            btnImportAfter.style.display = 'none';
-            return;
-          }
-          const issuesHtml = j.issues?.length
-            ? `<div class="card" style="margin-top:10px;border-color:var(--warn);background:#fdf3df;"><strong>⚠️ ${j.issue_count} 处问题:</strong><br>${j.issues.join('<br>')}${j.more_issues ? `<br>... 还有 ${j.more_issues} 处` : ''}</div>`
-            : '';
-          const previewRows = (j.preview || []).map((r) => `<tr><td>${r.row}</td><td>${r.date}</td><td>${r.subject}</td><td>${r.score}/${r.full_score}</td><td>${r.class_rank ?? '—'}</td></tr>`).join('');
-          out.innerHTML = `
-            <div class="card" style="margin-top:10px;border-color:var(--good);">
-              ✅ 通过 ${j.valid_count} / 共 ${j.total} 行 ·
-              新增考试 <strong>${j.new_exams}</strong> 场,科目分数 <strong>${j.new_scores}</strong> 条
+      {/* CSV Tab */}
+      <div id="tab-csv">
+          <p class="muted" style="margin-bottom:14px;">
+            表头: <code>date,type,semester,subject,score,full_score,class_rank,grade_rank,total_score,class_size,grade_size,notes</code>。<br>
+            同一日期 + 学期 + 学生会合并到同一次考试。先 <strong>校验预览</strong>,确认无误再导入。
+          </p>
+          <form method="post" action="/api/student" class="card" style="display:grid;gap:12px;">
+            <input type="hidden" name="_action" value="import" />
+            <label>学生
+              <select name="student_id" id="csv-student" required>
+                {students.map((s) => <option value={s.id}>{s.name} {s.grade && `(${s.grade})`}</option>)}
+              </select>
+            </label>
+            <label>CSV 内容
+              <textarea id="csv-text" name="csv" rows="14" required style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;">{sample}</textarea>
+            </label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button type="button" id="btn-csv-preview" style="background:var(--card);">🔍 校验预览</button>
+              <button type="submit">📥 直接导入</button>
+              <button type="button" id="btn-csv-import" style="display:none;background:var(--accent);color:#fff;border-color:var(--accent);">✅ 确认导入</button>
             </div>
-            <table style="margin-top:10px;font-size:12px;width:100%;border-collapse:collapse;">
-              <thead><tr style="text-align:left;color:var(--fg-muted);"><th>行</th><th>日期</th><th>科目</th><th>分数</th><th>班级排名</th></tr></thead>
-              <tbody>${previewRows}</tbody>
-            </table>
-            ${issuesHtml}
-          `;
-          if (j.valid_count > 0) btnImportAfter.style.display = 'inline-block';
-        } catch (e) {
-          out.innerHTML = `<div class="card" style="border-color:var(--bad);">❌ ${e.message}</div>`;
-        }
-      });
-      btnImportAfter.addEventListener('click', () => {
-        const form = btnPreview.closest('form');
-        form.submit();
-      });
-    }
-  </script>
+            <div id="csv-preview-out" style="display:none;"></div>
+            <details>
+              <summary class="muted" style="cursor:pointer;">示例数据(包含 1 行超满分 + 1 行未来日期用来测试校验)</summary>
+              <pre style="background:var(--bg);padding:10px;border-radius:6px;overflow:auto;font-size:11px;">{sample}</pre>
+            </details>
+          </form>
+        </div>
+
+      {/* Image Tab */}
+      <div id="tab-image" style="display:none;">
+        <p class="muted" style="margin-bottom:14px;">
+          上传成绩单图片(JPG / PNG / WEBP / GIF)→ Claude Haiku Vision 提取成绩 → 预览确认后导入。<br>
+          <span style="font-size:11px;">💡 iPhone HEIC 截图浏览器会自动转 JPEG。识别不准时可双击单元格编辑。每次约 ¥0.018。</span>
+        </p>
+        <div class="card" style="display:grid;gap:12px;">
+          <label>学生
+            <select id="img-student" required>
+              {students.map((s) => <option value={s.id}>{s.name} {s.grade && `(${s.grade})`}</option>)}
+            </select>
+          </label>
+          <div id="dropzone" style="border:2px dashed var(--line);border-radius:10px;padding:36px 20px;text-align:center;background:var(--card);cursor:pointer;transition:border-color .2s;">
+            <input type="file" id="img-input" accept="image/jpeg,image/jpg,image/png,image/webp,image/gif" style="display:none;" />
+            <p style="margin:0;font-size:15px;">📷 点击或拖拽成绩单图片到这里</p>
+            <p class="muted" style="margin:6px 0 12px;font-size:12px;">支持 JPEG / PNG / WEBP / GIF · 最大 4MB</p>
+            <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
+              <button type="button" id="btn-pick-file" style="background:var(--card);">📁 选文件</button>
+              <button type="button" id="btn-take-photo" style="background:var(--card);">📸 拍照</button>
+              <input type="file" id="camera-input" accept="image/jpeg" capture="environment" style="display:none;" />
+            </div>
+          </div>
+          <div id="img-preview-wrap" style="display:none;">
+            <div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;">
+              <img id="img-preview" style="max-width:240px;max-height:300px;border-radius:8px;border:1px solid var(--line);" />
+              <div style="flex:1;min-width:200px;">
+                <div class="muted" id="img-info" style="font-size:12px;margin-bottom:8px;"></div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                  <button type="button" id="btn-ocr" style="background:var(--accent);color:#fff;border-color:var(--accent);">🔍 AI 识别</button>
+                  <button type="button" id="btn-reset" style="background:var(--card);">🔄 重选</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="ocr-result-out" style="display:none;"></div>
+        </div>
+      </div>
+    </>
+  )}
 </Base>
+
+<style is:global>
+  .tab-btn {
+    background: transparent;
+    border: none;
+    border-bottom: 3px solid transparent;
+    padding: 10px 18px;
+    font-size: 14px;
+    cursor: pointer;
+    color: var(--fg-muted);
+    margin-bottom: -2px;
+    transition: color .15s, border-color .15s;
+  }
+  .tab-btn:hover { color: var(--fg); }
+  .tab-btn.tab-active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    font-weight: 600;
+  }
+  #dropzone.drag-over { border-color: var(--accent); background: var(--accent-soft); }
+  .ocr-cell { cursor: text; }
+  .ocr-cell:hover { background: var(--accent-soft); }
+  .ocr-cell-input {
+    width: 100%;
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    padding: 2px 4px;
+    font: inherit;
+    background: var(--bg);
+  }
+</style>
+
+<script is:inline>
+// ========== Tab 切换 ==========
+document.querySelectorAll('.tab-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('tab-active'));
+    btn.classList.add('tab-active');
+    const target = btn.dataset.tab;
+    document.getElementById('tab-csv').style.display = target === 'csv' ? 'block' : 'none';
+    document.getElementById('tab-image').style.display = target === 'image' ? 'block' : 'none';
+  });
+});
+
+// ========== CSV 校验 (原逻辑) ==========
+const csvText = document.getElementById('csv-text');
+const btnCsvPreview = document.getElementById('btn-csv-preview');
+const btnCsvImport = document.getElementById('btn-csv-import');
+const csvOut = document.getElementById('csv-preview-out');
+if (btnCsvPreview) {
+  btnCsvPreview.addEventListener('click', async () => {
+    csvOut.style.display = 'block';
+    csvOut.innerHTML = '<p class="muted">校验中...</p>';
+    const csv = csvText.value;
+    const studentId = document.getElementById('csv-student').value;
+    try {
+      const fd = new FormData();
+      fd.append('csv', csv);
+      fd.append('student_id', studentId);
+      const r = await fetch('/api/import', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!j.ok) {
+        csvOut.innerHTML = `<div class="card" style="border-color:var(--bad);background:#fbeae5;">❌ 解析失败:<br>${(j.errors || []).join('<br>')}</div>`;
+        btnCsvImport.style.display = 'none';
+        return;
+      }
+      const issuesHtml = j.issues?.length
+        ? `<div class="card" style="margin-top:10px;border-color:var(--warn);background:#fdf3df;"><strong>⚠️ ${j.issue_count} 处问题:</strong><br>${j.issues.join('<br>')}${j.more_issues ? `<br>... 还有 ${j.more_issues} 处` : ''}</div>`
+        : '';
+      const previewRows = (j.preview || []).map((r) => `<tr><td>${r.row}</td><td>${r.date}</td><td>${r.subject}</td><td>${r.score}/${r.full_score}</td><td>${r.class_rank ?? '—'}</td></tr>`).join('');
+      csvOut.innerHTML = `
+        <div class="card" style="margin-top:10px;border-color:var(--good);">
+          ✅ 通过 ${j.valid_count} / 共 ${j.total} 行 ·
+          新增考试 <strong>${j.new_exams}</strong> 场,科目分数 <strong>${j.new_scores}</strong> 条
+        </div>
+        <table style="margin-top:10px;font-size:12px;width:100%;border-collapse:collapse;">
+          <thead><tr style="text-align:left;color:var(--fg-muted);"><th>行</th><th>日期</th><th>科目</th><th>分数</th><th>班级排名</th></tr></thead>
+          <tbody>${previewRows}</tbody>
+        </table>
+        ${issuesHtml}
+      `;
+      if (j.valid_count > 0) btnCsvImport.style.display = 'inline-block';
+    } catch (e) {
+      csvOut.innerHTML = `<div class="card" style="border-color:var(--bad);">❌ ${e.message}</div>`;
+    }
+  });
+  btnCsvImport.addEventListener('click', () => {
+    btnCsvPreview.closest('form').submit();
+  });
+}
+
+// ========== 图片 OCR ==========
+const dropzone = document.getElementById('dropzone');
+const imgInput = document.getElementById('img-input');
+const cameraInput = document.getElementById('camera-input');
+const btnPickFile = document.getElementById('btn-pick-file');
+const btnTakePhoto = document.getElementById('btn-take-photo');
+const imgPreviewWrap = document.getElementById('img-preview-wrap');
+const imgPreview = document.getElementById('img-preview');
+const imgInfo = document.getElementById('img-info');
+const btnOcr = document.getElementById('btn-ocr');
+const btnReset = document.getElementById('btn-reset');
+const ocrResultOut = document.getElementById('ocr-result-out');
+
+let currentFile = null;
+let currentDataUrl = null;
+let editedRows = null; // 用户编辑后的 rows[]
+
+btnPickFile?.addEventListener('click', () => imgInput?.click());
+btnTakePhoto?.addEventListener('click', () => cameraInput?.click());
+
+async function handleFile(file) {
+  if (!file) return;
+  // HEIC 客户端转 JPEG
+  if (file.type === 'image/heic' || /\.heic$/i.test(file.name)) {
+    try {
+      const jpeg = await heicToJpeg(file);
+      file = jpeg;
+    } catch (e) {
+      ocrResultOut.style.display = 'block';
+      ocrResultOut.innerHTML = `<div class="card" style="border-color:var(--bad);background:#fbeae5;">❌ HEIC 转换失败: ${e.message}<br>请在 iPhone 设置 → 相机 → 格式 → 兼容性最佳,然后重拍。</div>`;
+      return;
+    }
+  }
+  currentFile = file;
+  // 显示预览
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    currentDataUrl = e.target.result;
+    imgPreview.src = currentDataUrl;
+    imgInfo.innerHTML = `📄 ${file.name}<br>📦 ${(file.size / 1024).toFixed(0)} KB · ${file.type || 'unknown'}`;
+    imgPreviewWrap.style.display = 'block';
+    ocrResultOut.style.display = 'none';
+    editedRows = null;
+  };
+  reader.readAsDataURL(file);
+}
+
+imgInput?.addEventListener('change', (e) => handleFile(e.target.files[0]));
+cameraInput?.addEventListener('change', (e) => handleFile(e.target.files[0]));
+
+// Drag & drop
+['dragenter', 'dragover'].forEach((evt) => {
+  dropzone?.addEventListener(evt, (e) => {
+    e.preventDefault();
+    dropzone.classList.add('drag-over');
+  });
+});
+['dragleave', 'drop'].forEach((evt) => {
+  dropzone?.addEventListener(evt, (e) => {
+    e.preventDefault();
+    dropzone.classList.remove('drag-over');
+  });
+});
+dropzone?.addEventListener('drop', (e) => {
+  handleFile(e.dataTransfer.files[0]);
+});
+
+btnReset?.addEventListener('click', () => {
+  currentFile = null;
+  currentDataUrl = null;
+  editedRows = null;
+  imgInput.value = '';
+  cameraInput.value = '';
+  imgPreviewWrap.style.display = 'none';
+  ocrResultOut.style.display = 'none';
+});
+
+// HEIC → JPEG (canvas)
+async function heicToJpeg(file) {
+  const buf = await file.arrayBuffer();
+  const blob = new Blob([buf], { type: 'image/heic' });
+  const url = URL.createObjectURL(blob);
+  const img = new Image();
+  await new Promise((resolve, reject) => {
+    img.onload = resolve;
+    img.onerror = () => reject(new Error('iOS Safari 无法解码 HEIC (试试 Chrome 或改相机设置)'));
+    img.src = url;
+  });
+  const canvas = document.createElement('canvas');
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  canvas.getContext('2d').drawImage(img, 0, 0);
+  URL.revokeObjectURL(url);
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+  const res = await fetch(dataUrl);
+  const jpegBlob = await res.blob();
+  return new File([jpegBlob], file.name.replace(/\.heic$/i, '.jpg'), { type: 'image/jpeg' });
+}
+
+// 调 OCR
+btnOcr?.addEventListener('click', async () => {
+  if (!currentFile || !currentDataUrl) return;
+  ocrResultOut.style.display = 'block';
+  ocrResultOut.innerHTML = '<p class="muted">🔄 AI 识别中... (~3-5 秒)</p>';
+  btnOcr.disabled = true;
+  const studentId = document.getElementById('img-student').value;
+  try {
+    // 把 data URL 转成 Blob
+    const res = await fetch(currentDataUrl);
+    const blob = await res.blob();
+    const fd = new FormData();
+    fd.append('student_id', studentId);
+    fd.append('image', blob, currentFile.name || 'report.jpg');
+    const r = await fetch('/api/ocr-preview', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!j.ok) {
+      ocrResultOut.innerHTML = `<div class="card" style="border-color:var(--bad);background:#fbeae5;">❌ ${j.error || 'OCR 失败'}${j.costUSD != null ? `<br>💰 已消耗 $${j.costUSD.toFixed(4)}` : ''}</div>`;
+      return;
+    }
+    editedRows = j.preview.map((r) => ({ ...r })); // 用于编辑
+    renderOcrResult(j);
+  } catch (e) {
+    ocrResultOut.innerHTML = `<div class="card" style="border-color:var(--bad);">❌ ${e.message}</div>`;
+  } finally {
+    btnOcr.disabled = false;
+  }
+});
+
+function renderOcrResult(j) {
+  const meta = j.meta || {};
+  const metaHtml = (meta.student_name || meta.school || meta.grade)
+    ? `<div class="card" style="margin-top:8px;border-color:var(--accent-soft);background:var(--accent-soft);font-size:12px;">📌 识别到的信息:${[meta.student_name, meta.school, meta.grade].filter(Boolean).join(' · ')} <span class="muted">(仅供参考,不写入)</span></div>`
+    : '';
+  const issuesHtml = j.issues?.length
+    ? `<div class="card" style="margin-top:10px;border-color:var(--warn);background:#fdf3df;"><strong>⚠️ ${j.issue_count} 处问题:</strong><br>${j.issues.join('<br>')}${j.more_issues ? `<br>... 还有 ${j.more_issues} 处` : ''}</div>`
+    : '';
+  const allRows = editedRows;
+  const tableRows = allRows.map((r, i) => `
+    <tr data-idx="${i}">
+      <td>${i + 1}</td>
+      <td class="ocr-cell" data-field="date">${r.date}</td>
+      <td class="ocr-cell" data-field="type">${r.type}</td>
+      <td class="ocr-cell" data-field="semester">${r.semester}</td>
+      <td class="ocr-cell" data-field="subject">${r.subject}</td>
+      <td class="ocr-cell" data-field="score"><strong>${r.score}</strong></td>
+      <td class="ocr-cell" data-field="full_score">${r.full_score}</td>
+    </tr>
+  `).join('');
+  ocrResultOut.innerHTML = `
+    <div class="card" style="margin-top:10px;border-color:var(--good);">
+      ✅ 识别 <strong>${j.total}</strong> 行,通过 <strong>${j.valid_count}</strong> 行 ·
+      新增考试 <strong>${j.new_exams}</strong> 场,科目分数 <strong>${j.new_scores}</strong> 条 ·
+      💰 $${(j.costUSD ?? 0).toFixed(4)}
+    </div>
+    ${metaHtml}
+    <p class="muted" style="margin:10px 0 4px;font-size:11px;">💡 双击单元格可编辑修改</p>
+    <table style="font-size:12px;width:100%;border-collapse:collapse;">
+      <thead><tr style="text-align:left;color:var(--fg-muted);">
+        <th>#</th><th>日期</th><th>类型</th><th>学期</th><th>科目</th><th>分数</th><th>满分</th>
+      </tr></thead>
+      <tbody>${tableRows}</tbody>
+    </table>
+    ${issuesHtml}
+    <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+      <button type="button" id="btn-ocr-confirm" style="background:var(--accent);color:#fff;border-color:var(--accent);">✅ 确认导入 (${j.valid_count} 条)</button>
+      <button type="button" id="btn-ocr-cancel" style="background:var(--card);">取消</button>
+    </div>
+  `;
+
+  // 双击单元格编辑
+  ocrResultOut.querySelectorAll('.ocr-cell').forEach((cell) => {
+    cell.addEventListener('dblclick', () => {
+      const idx = Number(cell.closest('tr').dataset.idx);
+      const field = cell.dataset.field;
+      const orig = cell.textContent;
+      const inp = document.createElement('input');
+      inp.type = field === 'score' || field === 'full_score' ? 'number' : 'text';
+      inp.value = orig;
+      inp.className = 'ocr-cell-input';
+      cell.textContent = '';
+      cell.appendChild(inp);
+      inp.focus();
+      inp.select();
+      const commit = () => {
+        const v = inp.value.trim();
+        cell.textContent = v;
+        editedRows[idx][field] = field === 'score' || field === 'full_score' ? Number(v) : v;
+      };
+      inp.addEventListener('blur', commit);
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') inp.blur();
+        if (e.key === 'Escape') { inp.removeEventListener('blur', commit); cell.textContent = orig; }
+      });
+    });
+  });
+
+  // 确认导入
+  document.getElementById('btn-ocr-confirm')?.addEventListener('click', () => {
+    // 把 editedRows → CSV 字符串,走现有 /api/student action=import
+    const csv = ['date,type,semester,subject,score,full_score,class_rank,grade_rank,total_score,class_size,grade_size,notes']
+      .concat(editedRows.map((r) => [r.date, r.type, r.semester, r.subject, r.score, r.full_score, '', '', '', '', '', ''].join(',')))
+      .join('\n');
+    const fd = new FormData();
+    fd.append('_action', 'import');
+    fd.append('student_id', document.getElementById('img-student').value);
+    fd.append('csv', csv);
+    fetch('/api/student', { method: 'POST', body: fd, redirect: 'follow' })
+      .then((r) => {
+        if (r.redirected) {
+          window.location.href = r.url;
+        } else {
+          r.text().then((t) => {
+            ocrResultOut.innerHTML += `<div class="card" style="margin-top:10px;border-color:var(--bad);">❌ ${t}</div>`;
+          });
+        }
+      })
+      .catch((e) => {
+        ocrResultOut.innerHTML += `<div class="card" style="margin-top:10px;border-color:var(--bad);">❌ ${e.message}</div>`;
+      });
+  });
+  document.getElementById('btn-ocr-cancel')?.addEventListener('click', () => {
+    ocrResultOut.style.display = 'none';
+    editedRows = null;
+  });
+}
+</script>
