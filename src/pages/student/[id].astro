@@ -1,0 +1,171 @@
+---
+import Base from '../../layouts/Base.astro';
+import { getStudent, listScoresForStudent, listExams, listComments, predictNext } from '../../lib/repo';
+import TrendChart from '../../components/TrendChart.astro';
+import RadarChart from '../../components/RadarChart.astro';
+
+const { id } = Astro.params;
+const student = id ? getStudent(id) : undefined;
+if (!student) {
+  return Astro.redirect('/');
+}
+
+const exams = listExams(student.id);
+const scores = listScoresForStudent(student.id);
+const comments = listComments(student.id);
+const url = new URL(Astro.request.url);
+const imported = url.searchParams.get('imported');
+const commented = url.searchParams.get('commented');
+
+const subjects = Array.from(new Set(scores.map((s) => s.subject))).sort();
+const semesters = Array.from(new Set(scores.map((s) => s.semester))).sort();
+const latestDate = exams.at(-1)?.date;
+const latest = scores.filter((s) => s.date === latestDate);
+const baseline: Record<string, number> = {};
+for (const sub of subjects) {
+  const subScores = scores.filter((s) => s.subject === sub).map((s) => s.score);
+  baseline[sub] = subScores.reduce((a, b) => a + b, 0) / subScores.length;
+}
+const predictions = predictNext(scores, 3);
+---
+<Base title={`${student.name} · 成绩看板`}>
+  <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px;">
+    <div style="width:56px;height:56px;border-radius:50%;background:var(--accent-soft);display:flex;align-items:center;justify-content:center;font-size:28px;">
+      {student.avatar || student.name[0]}
+    </div>
+    <div>
+      <h1 style="margin:0;">{student.name}</h1>
+      <div class="muted">{student.grade ?? '—'} · {student.school ?? '未填学校'}</div>
+    </div>
+    <div style="margin-left:auto;display:flex;gap:8px;">
+      <a href={`/student/${student.id}/print`} target="_blank" class="card" style="padding:8px 12px;font-size:13px;">🖨 导出 PDF</a>
+      <a href="/import" class="card" style="padding:8px 12px;font-size:13px;">📥 导入成绩</a>
+      <form method="post" action="/api/student" onsubmit="return confirm('确认删除这个学生及其所有成绩?')" style="display:inline;">
+        <input type="hidden" name="_action" value="delete" />
+        <input type="hidden" name="id" value={student.id} />
+        <button type="submit" style="color:var(--bad);">🗑 删除</button>
+      </form>
+    </div>
+  </div>
+
+  {imported && (
+    <div class="card" style="margin-bottom:16px;border-color:var(--good);">
+      ✅ 已导入 {imported === 'demo' ? '示例数据' : `${imported} 条科目分数`}
+    </div>
+  )}
+  {commented && (
+    <div class="card" style="margin-bottom:16px;border-color:var(--good);">
+      ✅ AI 评语已生成,见下方"学期评语"区
+    </div>
+  )}
+
+  {exams.length === 0 ? (
+    <div class="card" style="text-align:center;padding:48px 24px;">
+      <p style="font-size:18px;margin:0 0 8px;">还没有成绩数据</p>
+      <p class="muted" style="margin:0 0 16px;">用 <a href="/import">导入页</a> 上传 CSV,或点下方按钮生成 3 个月示例数据看效果。</p>
+      <form method="post" action="/api/student">
+        <input type="hidden" name="_action" value="seed" />
+        <input type="hidden" name="student_id" value={student.id} />
+        <button type="submit">🎲 生成示例数据</button>
+      </form>
+    </div>
+  ) : (
+    <div style="display:grid;gap:16px;">
+      <div class="card">
+        <h2>📈 科目趋势</h2>
+        <TrendChart subjects={subjects} scores={scores} />
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;" class="responsive-2col">
+        <div class="card">
+          <h2>🎯 强弱雷达</h2>
+          <RadarChart subjects={subjects} latest={latest} baseline={baseline} />
+        </div>
+        <div class="card">
+          <h2>📊 最近考试 + 下次预测</h2>
+          <table style="width:100%;border-collapse:collapse;">
+            <thead>
+              <tr style="text-align:left;font-size:13px;color:var(--fg-muted);">
+                <th style="padding:6px 0;">科目</th>
+                <th>最近</th>
+                <th>班级</th>
+                <th>预测</th>
+                <th>Δ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {subjects.map((sub) => {
+                const s = latest.find((x) => x.subject === sub);
+                const pred = predictions[sub];
+                const delta = s && pred != null ? pred - s.score : null;
+                const deltaColor = delta == null ? 'var(--fg-muted)' : delta > 0 ? 'var(--good)' : delta < 0 ? 'var(--bad)' : 'var(--fg-muted)';
+                const tier = s ? (s.score >= 90 ? '#d4a017' : s.score >= 75 ? 'var(--good)' : s.score < 60 ? 'var(--bad)' : 'var(--fg-muted)') : 'var(--fg-muted)';
+                return (
+                  <tr style="border-top:1px solid var(--line);">
+                    <td style="padding:8px 0;">{sub}</td>
+                    <td>{s ? <><strong style={`color:${tier};`}>{s.score}</strong><span class="muted">/{s.full_score}</span></> : '—'}</td>
+                    <td class="muted">{s?.class_rank ? `第 ${s.class_rank}` : '—'}</td>
+                    <td>{pred != null ? <strong>{pred}</strong> : '—'}</td>
+                    <td style={`color:${deltaColor};font-weight:600;`}>{delta != null && delta !== 0 ? (delta > 0 ? `+${delta}` : delta) : '—'}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <p class="muted" style="margin:8px 0 0;font-size:11px;">预测基于最近 3 次成绩线性外推,仅供参考</p>
+        </div>
+      </div>
+      <div class="card">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
+          <h2 style="margin:0;">💬 学期评语</h2>
+          <form method="post" action="/api/ai-comment" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <input type="hidden" name="student_id" value={student.id} />
+            <fieldset style="border:none;padding:0;margin:0;display:flex;gap:10px;font-size:12px;">
+              <label style="display:inline-flex;gap:4px;align-items:center;cursor:pointer;">
+                <input type="radio" name="type" value="exam" /> 一次考试
+              </label>
+              <label style="display:inline-flex;gap:4px;align-items:center;cursor:pointer;">
+                <input type="radio" name="type" value="semester" checked /> 学期总评
+              </label>
+              <label style="display:inline-flex;gap:4px;align-items:center;cursor:pointer;">
+                <input type="radio" name="type" value="year" /> 全年总览
+              </label>
+            </fieldset>
+            <select name="semester" style="padding:4px 8px;font-size:13px;">
+              {semesters.map((s) => <option value={s}>{s}</option>)}
+            </select>
+            <button type="submit" style="background:var(--accent);color:#fff;border-color:var(--accent);">✨ 生成</button>
+          </form>
+        </div>
+        {comments.length === 0 ? (
+          <p class="muted" style="margin:0;">还没有评语。点击右上角"生成"按钮,基于本机历史成绩生成一段家长友好的学期评估(无 API key 时走规则引擎兜底)。</p>
+        ) : (
+          <div style="display:grid;gap:10px;">
+            {comments.map((c) => (
+              <article style="border:1px solid var(--line);border-radius:8px;padding:12px 14px;background:var(--bg);">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:var(--fg-muted);">
+                  <span>📅 {c.created_at}</span>
+                  <span>·</span>
+                  <span style={`padding:1px 6px;border-radius:3px;background:var(--accent-soft);color:var(--accent);font-size:11px;`}>
+                    {c.type === 'exam' ? '一次考试' : c.type === 'year' ? '全年总览' : '学期总评'}
+                  </span>
+                  {c.semester && <span>{c.semester}</span>}
+                  {c.cost_usd != null && c.cost_usd > 0 && (
+                    <span>💰 ${c.cost_usd.toFixed(4)}</span>
+                  )}
+                  <form method="post" action="/api/comment" style="margin-left:auto;" onsubmit="return confirm('确认删除这条评语?')">
+                    <input type="hidden" name="_action" value="delete" />
+                    <input type="hidden" name="id" value={c.id} />
+                    <input type="hidden" name="student_id" value={student.id} />
+                    <button type="submit" style="padding:2px 8px;font-size:11px;color:var(--bad);border-color:var(--line);background:transparent;">✕</button>
+                  </form>
+                </div>
+                <div style="white-space:pre-wrap;line-height:1.6;">{c.content}</div>
+              </article>
+            ))}
+            <a href={`/api/comment?export=1&student_id=${student.id}`} style="display:inline-block;margin-top:8px;font-size:12px;color:var(--fg-muted);">📥 导出所有评语为 JSON</a>
+          </div>
+        )}
+      </div>
+    </div>
+  )}
+</Base>

@@ -1,0 +1,67 @@
+---
+interface Latest { subject: string; score: number; full_score: number }
+interface Props {
+  subjects: string[];
+  latest: Latest[];
+  baseline: Record<string, number>;
+}
+const { subjects, latest, baseline } = Astro.props;
+const W = 320, H = 260, cx = W / 2, cy = H / 2, R = 100;
+const N = subjects.length || 1;
+// 最近考试 = 折线(实际成绩); baseline = 历史均值(虚线)
+const pt = (i: number, v: number) => {
+  const a = (Math.PI * 2 * i) / N - Math.PI / 2;
+  const r = (Math.min(v, 100) / 100) * R;
+  return [cx + Math.cos(a) * r, cy + Math.sin(a) * r];
+};
+const labels = (i: number) => {
+  const a = (Math.PI * 2 * i) / N - Math.PI / 2;
+  return [cx + Math.cos(a) * (R + 14), cy + Math.sin(a) * (R + 14)];
+};
+
+function pathOf(rows: { subject: string; score: number }[]) {
+  if (!rows.length) return '';
+  return rows
+    .map((r, i) => {
+      const idx = subjects.indexOf(r.subject);
+      if (idx < 0) return '';
+      const [x, y] = pt(idx, r.score);
+      return `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`;
+    })
+    .filter(Boolean)
+    .concat('Z')
+    .join(' ');
+}
+
+const latestPath = pathOf(latest);
+const baselinePath = pathOf(subjects.map((s) => ({ subject: s, score: baseline[s] ?? 0 })));
+const rings = [25, 50, 75, 100];
+---
+<svg viewBox={`0 0 ${W} ${H}`} style="width:100%;max-width:320px;height:auto;display:block;margin:0 auto;" role="img" aria-label="强弱雷达图">
+  {/* 同心圆 */}
+  {rings.map((v) => (
+    <circle cx={cx} cy={cy} r={(v / 100) * R} fill="none" stroke="var(--line)" stroke-dasharray="2 3" />
+  ))}
+  {/* 辐射轴 */}
+  {subjects.map((_, i) => {
+    const [x, y] = pt(i, 100);
+    return <line x1={cx} y1={cy} x2={x} y2={y} stroke="var(--line)" />;
+  })}
+  {/* baseline 多边形 (虚线) */}
+  {baselinePath && <path d={baselinePath} fill="none" stroke="var(--fg-muted)" stroke-width="1.5" stroke-dasharray="3 3" opacity="0.55" />}
+  {/* latest 多边形 */}
+  {latestPath && <path d={latestPath} fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2" />}
+  {/* 标签 */}
+  {subjects.map((s, i) => {
+    const [x, y] = labels(i);
+    return (
+      <text x={x} y={y} text-anchor="middle" font-size="11" fill="var(--fg)" dominant-baseline="middle">
+        {s}
+      </text>
+    );
+  })}
+</svg>
+<div class="muted" style="text-align:center;margin-top:4px;">
+  <span style="display:inline-block;width:18px;height:2px;background:var(--accent);vertical-align:middle;margin-right:4px;"></span> 最近考试
+  <span style="display:inline-block;width:18px;border-top:1px dashed var(--fg-muted);vertical-align:middle;margin:0 4px 0 14px;"></span> 历史均值
+</div>

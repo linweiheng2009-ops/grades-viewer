@@ -1,0 +1,100 @@
+---
+import Base from '../layouts/Base.astro';
+import { listStudents } from '../lib/repo';
+const students = listStudents();
+const sample = `date,type,semester,subject,score,full_score,class_rank,grade_rank,total_score,class_size,grade_size,notes
+2025-09-15,monthly,2025-fall,语文,82,100,12,120,,45,450,听写慢
+2025-09-15,monthly,2025-fall,数学,78,100,18,180,,45,450,
+2025-09-15,monthly,2025-fall,英语,88,100,8,80,,45,450,
+2025-10-20,monthly,2025-fall,语文,85,100,10,100,,45,450,
+2025-10-20,monthly,2025-fall,数学,82,100,15,160,,45,450,
+2025-10-20,monthly,2025-fall,英语,90,100,6,60,,45,450,
+2026-09-20,quiz,2026-fall,数学,150,100,5,50,,45,450,分数超满分
+2030-01-01,final,2099-fall,数学,90,100,,,,,`;
+---
+<Base title="导入成绩 · 成绩看板" active="import">
+  <h1>导入成绩</h1>
+  <p class="muted" style="margin-bottom:20px;">
+    支持 CSV。表头: <code>date,type,semester,subject,score,full_score,class_rank,grade_rank,total_score,class_size,grade_size,notes</code>。<br>
+    同一日期 + 学期 + 学生会合并到同一次考试。先 <strong>校验预览</strong>,确认无误再导入。
+  </p>
+
+  {students.length === 0 ? (
+    <div class="card" style="text-align:center;">
+      <p>还没有学生,先去 <a href="/">首页</a> 添加一个。</p>
+    </div>
+  ) : (
+    <form method="post" action="/api/student" class="card" style="display:grid;gap:12px;">
+      <input type="hidden" name="_action" value="import" />
+      <label>学生
+        <select name="student_id" required>
+          {students.map((s) => <option value={s.id}>{s.name} {s.grade && `(${s.grade})`}</option>)}
+        </select>
+      </label>
+      <label>CSV 内容
+        <textarea id="csv-text" name="csv" rows="14" required style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;">{sample}</textarea>
+      </label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button type="button" id="btn-preview" style="background:var(--card);">🔍 校验预览</button>
+        <button type="submit">📥 直接导入</button>
+        <button type="button" id="btn-import-after-preview" style="display:none;background:var(--accent);color:#fff;border-color:var(--accent);">✅ 确认导入</button>
+      </div>
+
+      <div id="preview-out" style="display:none;"></div>
+
+      <details>
+        <summary class="muted" style="cursor:pointer;">示例数据(包含 1 行超满分 + 1 行未来日期用来测试校验)</summary>
+        <pre style="background:var(--bg);padding:10px;border-radius:6px;overflow:auto;font-size:11px;">{sample}</pre>
+      </details>
+    </form>
+  )}
+
+  <script is:inline>
+    const csvText = document.getElementById('csv-text');
+    const btnPreview = document.getElementById('btn-preview');
+    const btnImportAfter = document.getElementById('btn-import-after-preview');
+    const out = document.getElementById('preview-out');
+    if (btnPreview) {
+      btnPreview.addEventListener('click', async () => {
+        out.style.display = 'block';
+        out.innerHTML = '<p class="muted">校验中...</p>';
+        const csv = csvText.value;
+        const studentId = document.querySelector('select[name="student_id"]').value;
+        try {
+          const fd = new FormData();
+          fd.append('csv', csv);
+          fd.append('student_id', studentId);
+          const r = await fetch('/api/import', { method: 'POST', body: fd });
+          const j = await r.json();
+          if (!j.ok) {
+            out.innerHTML = `<div class="card" style="border-color:var(--bad);background:#fbeae5;">❌ 解析失败:<br>${(j.errors || []).join('<br>')}</div>`;
+            btnImportAfter.style.display = 'none';
+            return;
+          }
+          const issuesHtml = j.issues?.length
+            ? `<div class="card" style="margin-top:10px;border-color:var(--warn);background:#fdf3df;"><strong>⚠️ ${j.issue_count} 处问题:</strong><br>${j.issues.join('<br>')}${j.more_issues ? `<br>... 还有 ${j.more_issues} 处` : ''}</div>`
+            : '';
+          const previewRows = (j.preview || []).map((r) => `<tr><td>${r.row}</td><td>${r.date}</td><td>${r.subject}</td><td>${r.score}/${r.full_score}</td><td>${r.class_rank ?? '—'}</td></tr>`).join('');
+          out.innerHTML = `
+            <div class="card" style="margin-top:10px;border-color:var(--good);">
+              ✅ 通过 ${j.valid_count} / 共 ${j.total} 行 ·
+              新增考试 <strong>${j.new_exams}</strong> 场,科目分数 <strong>${j.new_scores}</strong> 条
+            </div>
+            <table style="margin-top:10px;font-size:12px;width:100%;border-collapse:collapse;">
+              <thead><tr style="text-align:left;color:var(--fg-muted);"><th>行</th><th>日期</th><th>科目</th><th>分数</th><th>班级排名</th></tr></thead>
+              <tbody>${previewRows}</tbody>
+            </table>
+            ${issuesHtml}
+          `;
+          if (j.valid_count > 0) btnImportAfter.style.display = 'inline-block';
+        } catch (e) {
+          out.innerHTML = `<div class="card" style="border-color:var(--bad);">❌ ${e.message}</div>`;
+        }
+      });
+      btnImportAfter.addEventListener('click', () => {
+        const form = btnPreview.closest('form');
+        form.submit();
+      });
+    }
+  </script>
+</Base>

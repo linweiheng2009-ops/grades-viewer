@@ -1,0 +1,90 @@
+---
+import { getStudent, listScoresForStudent, listExams, listComments } from '../../../lib/repo';
+import TrendChart from '../../../components/TrendChart.astro';
+import RadarChart from '../../../components/RadarChart.astro';
+
+const { id } = Astro.params;
+const student = id ? getStudent(id) : undefined;
+if (!student) return Astro.redirect('/');
+
+const exams = listExams(student.id);
+const scores = listScoresForStudent(student.id);
+const comments = listComments(student.id);
+
+const subjects = Array.from(new Set(scores.map((s) => s.subject))).sort();
+const semesters = Array.from(new Set(scores.map((s) => s.semester))).sort();
+const latestDate = exams.at(-1)?.date;
+const latest = scores.filter((s) => s.date === latestDate);
+const baseline: Record<string, number> = {};
+for (const sub of subjects) {
+  const subScores = scores.filter((s) => s.subject === sub).map((s) => s.score);
+  baseline[sub] = subScores.reduce((a, b) => a + b, 0) / subScores.length;
+}
+---
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>{student.name} · 学习评估报告</title>
+    <style>
+      @page { size: A4; margin: 18mm; }
+      body { font-family: -apple-system, 'PingFang SC', 'Microsoft Yahei', sans-serif; color: #222; line-height: 1.6; font-size: 13px; margin: 0; }
+      h1 { font-size: 22px; margin: 0 0 4px; }
+      h2 { font-size: 16px; margin: 18px 0 8px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
+      .meta { color: #666; font-size: 12px; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { padding: 5px 8px; text-align: left; border-bottom: 1px solid #eee; font-size: 12px; }
+      th { color: #666; font-weight: 500; }
+      .comment { background: #f9f6f1; border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; white-space: pre-wrap; font-size: 13px; }
+      .footer { color: #999; font-size: 10px; text-align: center; margin-top: 24px; border-top: 1px solid #eee; padding-top: 8px; }
+      @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>{student.name} · 学习评估报告</h1>
+      <div class="meta">
+        {student.grade ?? ''} {student.school && `· ${student.school}`} · 报告生成于 {new Date().toLocaleDateString('zh-CN')}
+      </div>
+    </header>
+
+    <h2>科目趋势</h2>
+    <TrendChart subjects={subjects} scores={scores} />
+
+    <h2>强弱雷达</h2>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:center;">
+      <div><RadarChart subjects={subjects} latest={latest} baseline={baseline} /></div>
+      <table>
+        <thead><tr><th>科目</th><th>最近</th><th>均值</th></tr></thead>
+        <tbody>
+          {subjects.map((s) => {
+            const l = latest.find((x) => x.subject === s);
+            return (
+              <tr>
+                <td>{s}</td>
+                <td>{l ? l.score : '—'}</td>
+                <td>{Math.round(baseline[s])}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+
+    {comments.length > 0 && (
+      <>
+        <h2>学期评语</h2>
+        {comments.slice(0, 3).map((c) => (
+          <div class="comment">{c.content}</div>
+        ))}
+      </>
+    )}
+
+    <div class="footer">
+      成绩看板 · 本地版 · 共 {exams.length} 次考试 · {scores.length} 条科目分数
+    </div>
+
+    <script>setTimeout(() => window.print(), 300);</script>
+  </body>
+</html>

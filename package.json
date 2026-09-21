@@ -1,0 +1,29 @@
+{
+  "name": "grades-viewer",
+  "type": "module",
+  "version": "0.0.1",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "@astrojs/node": "^11.1.6",
+    "astro": "^7.3.3",
+    "better-sqlite3": "^13.0.3",
+    "d3-shape": "^3.2.0",
+    "papaparse": "^5.7.0"
+  },
+  "allowScripts": {
+    "esbuild": true
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/d3-shape": "^3.2.0",
+    "@types/papaparse": "^5.5.2"
+  }
+}
