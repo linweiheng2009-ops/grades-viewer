@@ -9,6 +9,7 @@ export default defineConfig({
   adapter: cloudflare({
     platformProxy: { enabled: true },
     imageService: false,
+    sessionKVBindingName: undefined,
   }),
   security: { checkOrigin: false },
 });

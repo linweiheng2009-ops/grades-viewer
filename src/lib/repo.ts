@@ -1,9 +1,10 @@
 import type { AstroGlobal } from 'astro';
 import type { DB } from './db';
 import { randomUUID } from 'node:crypto';
+import { env as cfEnv } from 'cloudflare:workers';
 
 // ---------- DB 注入 ----------
-// 优先级: Astro.locals.runtime.env.DB (CF Pages / wrangler dev) → process.env.LOCAL_DB_PATH 走 better-sqlite3
+// 优先级: cloudflare:workers env.DB (CF Pages / wrangler dev) → process.env.LOCAL_DB_PATH 走 better-sqlite3
 let _localSqlite: any = null;
 let _localDb: DB | null = null;
 async function localSqliteDb(): Promise<DB> {
@@ -28,10 +29,10 @@ async function localSqliteDb(): Promise<DB> {
 // 标记: 部署到 CF Pages 时,即便 import better-sqlite3 失败 (native binding),
 // 我们只在 LOCAL_DB_PATH 显式设置时才尝试加载,触发条件用户可控。
 
-// 兼容 APIRoute({ locals }) 和 AstroGlobal (页面) 两种调用方式
+// host 参数保留兼容性,但 CF 部署时实际从 cloudflare:workers env 直接拿 DB
 export type DbHost = AstroGlobal | { locals: any };
-export async function getDb(host: DbHost): Promise<DB> {
-  const d1 = (host as any).locals?.runtime?.env?.DB;
+export async function getDb(_host?: DbHost): Promise<DB> {
+  const d1 = (cfEnv as any)?.DB;
   if (d1) return d1;
   const local = await localSqliteDb();
   if (local) return local;
@@ -39,8 +40,10 @@ export async function getDb(host: DbHost): Promise<DB> {
 }
 
 export async function ensureSchema(db: DB) {
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS students (
+  // D1 db.exec() 在 Workers binding 里有时会因 multi-line CREATE 报错,
+  // 改用 db.batch(prepare(...).run()) 串行跑
+  const stmts = [
+    `CREATE TABLE IF NOT EXISTS students (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       birth_date TEXT,
@@ -48,8 +51,8 @@ export async function ensureSchema(db: DB) {
       school TEXT,
       avatar TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE TABLE IF NOT EXISTS exams (
+    )`,
+    `CREATE TABLE IF NOT EXISTS exams (
       id TEXT PRIMARY KEY,
       student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
       date TEXT NOT NULL,
@@ -62,9 +65,9 @@ export async function ensureSchema(db: DB) {
       grade_size INTEGER,
       notes TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE INDEX IF NOT EXISTS idx_exams_student ON exams(student_id, date);
-    CREATE TABLE IF NOT EXISTS subject_scores (
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_exams_student ON exams(student_id, date)`,
+    `CREATE TABLE IF NOT EXISTS subject_scores (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       exam_id TEXT NOT NULL REFERENCES exams(id) ON DELETE CASCADE,
       subject TEXT NOT NULL,
@@ -72,10 +75,10 @@ export async function ensureSchema(db: DB) {
       full_score REAL NOT NULL,
       class_rank INTEGER,
       grade_rank INTEGER
-    );
-    CREATE INDEX IF NOT EXISTS idx_scores_exam ON subject_scores(exam_id);
-    CREATE INDEX IF NOT EXISTS idx_scores_subject ON subject_scores(subject);
-    CREATE TABLE IF NOT EXISTS ai_comments (
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_scores_exam ON subject_scores(exam_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_scores_subject ON subject_scores(subject)`,
+    `CREATE TABLE IF NOT EXISTS ai_comments (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
       exam_id TEXT,
@@ -84,9 +87,13 @@ export async function ensureSchema(db: DB) {
       content TEXT NOT NULL,
       cost_usd REAL,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE INDEX IF NOT EXISTS idx_comments_student ON ai_comments(student_id, created_at);
-  `);
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_comments_student ON ai_comments(student_id, created_at)`,
+  ];
+  for (const s of stmts) {
+    // D1 Workers binding 里 db.exec() 对多行 SQL 偶尔解析失败,改用 prepare().run() 稳定
+    await db.prepare(s).run();
+  }
 }
 
 // ---------- types ----------

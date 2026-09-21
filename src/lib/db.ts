@@ -1,7 +1,8 @@
 // 双模式 DB 抽象:
-// - 生产 (CF Pages): 通过 Astro.locals.runtime.env.DB (D1 binding) 提供 D1Database
-// - 本地开发: 用 wrangler pages dev 跑时同样注入; 或 npm run dev:local 走 better-sqlite3
+// - 生产 (CF Pages): 通过 cloudflare:workers env.DB (D1 binding) 提供 D1Database
+// - 本地开发: 用 wrangler dev 跑时同样注入; 或 npm run dev:local 走 better-sqlite3
 // 仓库层(repo.ts)统一只调 sql() 接口,屏蔽差异
+// D1 的 db.exec() 只支持单条 SQL,多 CREATE 必须拆开
 
 export interface DB {
   prepare(sql: string): D1Prepared;

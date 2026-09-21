@@ -7,8 +7,9 @@
   },
   "scripts": {
     "dev": "astro dev",
-    "build": "astro build",
+    "build": "astro build && node scripts/postbuild.mjs",
     "preview": "astro preview",
+    "deploy": "node scripts/predeploy.mjs && wrangler deploy && node scripts/postbuild.mjs",
     "astro": "astro"
   },
   "dependencies": {
