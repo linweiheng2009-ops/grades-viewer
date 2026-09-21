@@ -14,7 +14,7 @@ interface Props {
 const { subjects, scores } = Astro.props;
 
 const PALETTE = ['#c25a2a', '#2f7d32', '#2a6cc2', '#8e3ec2', '#c08515', '#0d8e8e', '#c2336f', '#5a6072'];
-const W = 760, H = 280, P = { t: 22, r: 18, b: 32, l: 40 };
+const W = 760, H = 340, P = { t: 30, r: 26, b: 38, l: 44 };
 const innerW = W - P.l - P.r;
 const innerH = H - P.t - P.b;
 
@@ -24,16 +24,10 @@ const yMin = 0, yMax = 100;
 const xAt = (i: number) => P.l + (i / xMax) * innerW;
 const yAt = (v: number) => P.t + (1 - (v - yMin) / (yMax - yMin)) * innerH;
 
-// 班级中位分估算: class_rank/class_size 占比 → 把"我离班级中位的分差"压到 ±30 分范围
-function medianOffset(p: Score): number | null {
-  if (!p.class_rank || !p.class_size || p.class_size < 2) return null;
-  const pct = (p.class_size / 2 - p.class_rank) / p.class_size; // -0.5 ~ +0.5
-  return pct * 60; // 班级中位 ≈ 我的分 + offset
-}
-function medianScore(p: Score): number | null {
-  const off = medianOffset(p);
-  return off == null ? null : p.score + off;
-}
+const grid = [0, 25, 50, 75, 100];
+
+// 数据点 ≥ 6 才画 3 点移动平均,否则虚线会和折线重叠(小样本)
+const showMA = dates.length >= 6;
 
 // 移动平均(窗口 3)
 function ma(pts: (number | null)[]): (number | null)[] {
@@ -50,55 +44,41 @@ function buildPath(vals: (number | null)[]) {
     .filter(Boolean)
     .join(' ');
 }
-
-const grid = [0, 25, 50, 75, 100];
 ---
-<svg viewBox={`0 0 ${W} ${H}`} style="width:100%;height:auto;display:block;" role="img" aria-label="成绩趋势图">
-  {/* Y 网格 */}
+<svg viewBox={`0 0 ${W} ${H}`} style="width:100%;height:auto;display:block;font-family:inherit;" role="img" aria-label="成绩趋势图">
+  {/* Y 网格 + 阈值线 */}
   {grid.map((v) => (
     <g>
       <line x1={P.l} x2={W - P.r} y1={yAt(v)} y2={yAt(v)} stroke="var(--line)" stroke-dasharray={v === 0 ? '0' : '2 3'} />
       <text x={P.l - 6} y={yAt(v) + 3} text-anchor="end" font-size="11" fill="var(--fg-muted)">{v}</text>
     </g>
   ))}
+  {/* 90 优秀线 (金) */}
+  <line x1={P.l} x2={W - P.r} y1={yAt(90)} y2={yAt(90)} stroke="#d4a017" stroke-dasharray="6 3" opacity="0.45" />
+  <text x={W - P.r + 2} y={yAt(90) + 3} font-size="9" fill="#d4a017" opacity="0.7">90</text>
+  {/* 60 及格线 (红) */}
+  <line x1={P.l} x2={W - P.r} y1={yAt(60)} y2={yAt(60)} stroke="#b3331f" stroke-dasharray="6 3" opacity="0.45" />
+  <text x={W - P.r + 2} y={yAt(60) + 3} font-size="9" fill="#b3331f" opacity="0.7">60</text>
+
   {/* X 标签 */}
   {dates.map((d, i) => (
     <text x={xAt(i)} y={H - P.b + 14} text-anchor="middle" font-size="10" fill="var(--fg-muted)">{d.slice(5)}</text>
   ))}
 
-  {/* 班级中位虚线 (按科目各自画) */}
-  {subjects.map((subj, si) => {
-    const vals = dates.map((d) => {
-      const p = scores.find((s) => s.subject === subj && s.date === d);
-      return p ? medianScore(p) : null;
-    });
-    if (vals.every((v) => v == null)) return null;
-    return (
-      <path
-        d={buildPath(vals)}
-        stroke={PALETTE[si % PALETTE.length]}
-        stroke-width="1"
-        stroke-dasharray="2 4"
-        opacity="0.4"
-        fill="none"
-      />
-    );
-  })}
-
   {/* 折线 (各科) */}
   {subjects.map((subj, si) => {
     const vals = dates.map((d) => scores.find((s) => s.subject === subj && s.date === d)?.score ?? null);
-    return <path d={buildPath(vals)} stroke={PALETTE[si % PALETTE.length]} stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" />;
+    return <path d={buildPath(vals)} stroke={PALETTE[si % PALETTE.length]} stroke-width="2.5" fill="none" stroke-linejoin="round" stroke-linecap="round" />;
   })}
 
-  {/* 移动平均虚线 (各科, 3 点) */}
-  {subjects.map((subj, si) => {
+  {/* 移动平均虚线 (≥6 点才显示,避免和折线重叠) */}
+  {showMA && subjects.map((subj, si) => {
     const vals = dates.map((d) => scores.find((s) => s.subject === subj && s.date === d)?.score ?? null);
     const maVals = ma(vals);
-    return <path d={buildPath(maVals)} stroke={PALETTE[si % PALETTE.length]} stroke-width="1.5" stroke-dasharray="5 2" fill="none" opacity="0.85" />;
+    return <path d={buildPath(maVals)} stroke={PALETTE[si % PALETTE.length]} stroke-width="1.5" stroke-dasharray="5 2" fill="none" opacity="0.7" />;
   })}
 
-  {/* 数据点 + delta 标签 (各科最近两点) */}
+  {/* 数据点 + 分数标签 */}
   {subjects.map((subj, si) => {
     const color = PALETTE[si % PALETTE.length];
     const pts = dates.map((d) => scores.find((s) => s.subject === subj && s.date === d));
@@ -106,27 +86,58 @@ const grid = [0, 25, 50, 75, 100];
       <g>
         {pts.map((p, di) => {
           if (!p) return null;
-          // 评分阈值: ⭐>=90, 良>=75, 待提升<60, 一般其他
           const tier = p.score >= 90 ? 'star' : p.score >= 75 ? 'good' : p.score < 60 ? 'bad' : 'mid';
-          const r = tier === 'star' ? 5 : 3;
+          const r = tier === 'star' ? 5 : 3.5;
           return (
             <g>
               <circle cx={xAt(di)} cy={yAt(p.score)} r={r + 2} fill={color} opacity="0.18" />
               <circle cx={xAt(di)} cy={yAt(p.score)} r={r} fill={color} stroke={tier === 'star' ? '#d4a017' : tier === 'bad' ? '#b3331f' : 'none'} stroke-width={tier === 'star' || tier === 'bad' ? 1.5 : 0} />
-              {tier === 'star' && (
-                <text x={xAt(di)} y={yAt(p.score) - 10} text-anchor="middle" font-size="9" fill="#d4a017">⭐</text>
-              )}
+              <text
+                x={xAt(di)}
+                y={yAt(p.score) - (r + 6)}
+                text-anchor="middle"
+                font-size="10"
+                font-weight="600"
+                fill={color}
+              >{p.score}</text>
             </g>
           );
         })}
-        {pts.length >= 2 && pts.at(-1)!.score != null && pts.at(-2)!.score != null && (() => {
-          const last = pts.at(-1)!;
-          const prev = pts.at(-2)!;
-          const d = last.score - prev.score;
-          const sign = d > 0 ? '+' : '';
-          const color = d > 0 ? 'var(--good)' : d < 0 ? 'var(--bad)' : 'var(--fg-muted)';
-          return <text x={xAt(pts.length - 1)} y={yAt(last.score) - 8} text-anchor="middle" font-size="10" font-weight="600" fill={color}>{sign}{d}</text>;
-        })()}
+      </g>
+    );
+  })}
+
+  {/* 最后一点 delta 标签 (各科) */}
+  {subjects.map((subj, si) => {
+    const color = PALETTE[si % PALETTE.length];
+    const pts = dates.map((d) => scores.find((s) => s.subject === subj && s.date === d));
+    if (pts.length < 2 || !pts.at(-1) || !pts.at(-2)) return null;
+    const last = pts.at(-1)!;
+    const prev = pts.at(-2)!;
+    const d = last.score - prev.score;
+    if (d === 0) return null;
+    const sign = d > 0 ? '+' : '';
+    const dColor = d > 0 ? 'var(--good)' : 'var(--bad)';
+    return (
+      <g>
+        <rect
+          x={xAt(pts.length - 1) - 14}
+          y={yAt(last.score) + 8}
+          width="28"
+          height="14"
+          rx="3"
+          fill="var(--card)"
+          stroke={dColor}
+          stroke-width="1"
+        />
+        <text
+          x={xAt(pts.length - 1)}
+          y={yAt(last.score) + 18}
+          text-anchor="middle"
+          font-size="10"
+          font-weight="700"
+          fill={dColor}
+        >{sign}{d}</text>
       </g>
     );
   })}
@@ -139,11 +150,15 @@ const grid = [0, 25, 50, 75, 100];
       {subj}
     </span>
   ))}
-  <span style="display:inline-flex;align-items:center;gap:6px;color:var(--fg-muted);">
-    <span style="width:14px;border-top:1.5px dashed currentColor;display:inline-block;"></span> 3 点移动平均
+  {showMA && (
+    <span style="display:inline-flex;align-items:center;gap:6px;color:var(--fg-muted);">
+      <span style="width:14px;border-top:1.5px dashed currentColor;display:inline-block;"></span> 3 点移动平均
+    </span>
+  )}
+  <span style="display:inline-flex;align-items:center;gap:6px;color:#d4a017;">
+    <span style="width:14px;border-top:1px dashed currentColor;display:inline-block;"></span> 90 优秀线
   </span>
-  <span style="display:inline-flex;align-items:center;gap:6px;color:var(--fg-muted);">
-    <span style="width:14px;border-top:1px dashed currentColor;display:inline-block;"></span> 班级中位估算
+  <span style="display:inline-flex;align-items:center;gap:6px;color:var(--bad);">
+    <span style="width:14px;border-top:1px dashed currentColor;display:inline-block;"></span> 60 及格线
   </span>
-  <span style="display:inline-flex;align-items:center;gap:4px;color:#d4a017;">⭐ ≥90 优秀</span>
 </div>
