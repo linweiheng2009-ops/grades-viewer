@@ -22,3 +22,9 @@ Thumbs.db
 # env
 .env
 .env.local
+
+.wrangler/
+data/
+*.db
+*.db-shm
+*.db-wal

@@ -1,7 +1,9 @@
 ---
 import Base from '../layouts/Base.astro';
-import { listStudents } from '../lib/repo';
-const students = listStudents();
+import { listStudents, getDb, ensureSchema } from '../lib/repo';
+const db = await getDb(Astro);
+await ensureSchema(db);
+const students = await listStudents(db);
 const sample = `date,type,semester,subject,score,full_score,class_rank,grade_rank,total_score,class_size,grade_size,notes
 2025-09-15,monthly,2025-fall,语文,82,100,12,120,,45,450,听写慢
 2025-09-15,monthly,2025-fall,数学,78,100,18,180,,45,450,

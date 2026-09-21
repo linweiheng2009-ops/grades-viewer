@@ -1,21 +1,26 @@
 ---
 import Base from '../layouts/Base.astro';
-import db from '../lib/db';
+import { getDb, ensureSchema } from '../lib/repo';
+const db = await getDb(Astro);
+await ensureSchema(db);
 const counts = {
-  students: (db.prepare('SELECT COUNT(*) AS n FROM students').get() as any).n,
-  exams: (db.prepare('SELECT COUNT(*) AS n FROM exams').get() as any).n,
-  scores: (db.prepare('SELECT COUNT(*) AS n FROM subject_scores').get() as any).n,
-  comments: (db.prepare('SELECT COUNT(*) AS n FROM ai_comments').get() as any).n,
+  students: (await db.prepare('SELECT COUNT(*) AS n FROM students').first<any>())?.n ?? 0,
+  exams: (await db.prepare('SELECT COUNT(*) AS n FROM exams').first<any>())?.n ?? 0,
+  scores: (await db.prepare('SELECT COUNT(*) AS n FROM subject_scores').first<any>())?.n ?? 0,
+  comments: (await db.prepare('SELECT COUNT(*) AS n FROM ai_comments').first<any>())?.n ?? 0,
 };
+// 注意: 部署到 CF Pages 后 process.env.* 仅读取 wrangler.toml 的 [vars],敏感 key 应走 secret
 const hasAI = !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
 const baseUrl = process.env.ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com';
+const model = process.env.ANTHROPIC_MODEL ?? 'MiniMax-M3';
+const storage = Astro.locals.runtime?.env?.DB ? 'CF D1 (云端 SQLite)' : '本地 SQLite (data/grades.db)';
 ---
 <Base title="设置 · 成绩看板" active="settings">
   <h1>设置</h1>
 
   <div class="card" style="margin-bottom:16px;">
-    <h2>本地数据</h2>
-    <p class="muted" style="margin:0 0 12px;">所有数据存在本机 SQLite,不上传任何服务器。</p>
+    <h2>数据</h2>
+    <p class="muted" style="margin:0 0 12px;">存储位置: <code>{storage}</code></p>
     <table style="font-size:14px;">
       <tr><td class="muted" style="padding-right:24px;">学生</td><td><strong>{counts.students}</strong></td></tr>
       <tr><td class="muted">考试</td><td><strong>{counts.exams}</strong></td></tr>
@@ -31,18 +36,18 @@ const baseUrl = process.env.ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com';
       <tr><td class="muted" style="padding-right:24px;">状态</td>
           <td>{hasAI ? '✅ 已配置 API key' : '⚠️ 未配置,使用规则兜底'}</td></tr>
       <tr><td class="muted">Base URL</td><td><code>{baseUrl}</code></td></tr>
-      <tr><td class="muted">模型</td><td><code>{process.env.ANTHROPIC_MODEL ?? 'MiniMax-M3'}</code></td></tr>
+      <tr><td class="muted">模型</td><td><code>{model}</code></td></tr>
     </table>
     <p class="muted" style="margin-top:12px;font-size:12px;">
-      配 key: <code>export ANTHROPIC_API_KEY=sk-xxx</code> 重启 dev server 即可
+      配 key: <code>wrangler pages secret put ANTHROPIC_API_KEY --project-name grades-viewer</code>
     </p>
   </div>
 
   <div class="card" style="margin-bottom:16px;">
     <h2>隐私原则</h2>
     <ul style="font-size:14px;line-height:1.8;margin:0;padding-left:20px;">
-      <li>所有学生成绩只存在本机 SQLite(<code>data/grades.db</code>)</li>
-      <li>默认不上传任何服务器</li>
+      <li>所有学生成绩存在 D1 (云端 SQLite),或本机 SQLite</li>
+      <li>不上传任何第三方服务器(AI 调用除外,且仅在生成评语时)</li>
       <li>AI 评语仅在生成时把成绩数据发给 Anthropic,无 key 时不联网</li>
       <li>导出的 PDF 由浏览器本地生成,不经服务器</li>
       <li>删除学生 = 同时级联删除其所有考试 / 分数 / 评语</li>
@@ -52,7 +57,7 @@ const baseUrl = process.env.ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com';
   <div class="card">
     <h2>关于</h2>
     <p style="margin:0;font-size:13px;color:var(--fg-muted);line-height:1.7;">
-      成绩看板 v0.1 · Astro 7 + better-sqlite3 + 纯 SVG 自绘图表。<br>
+      成绩看板 v0.1 · Astro 7 + Cloudflare Pages + D1 + 纯 SVG 自绘图表。<br>
       为自用而设计,不做社交、不公开、不排名、不打广告。
     </p>
   </div>

@@ -1,19 +1,21 @@
 import type { APIRoute } from 'astro';
-import { getStudent, listScoresForStudent, listExams, saveComment } from '../../lib/repo';
+import { getStudent, listScoresForStudent, saveComment, getDb, ensureSchema } from '../../lib/repo';
 import { generateComment } from '../../lib/ai';
 
-export const POST: APIRoute = async ({ request, redirect }) => {
+export const POST: APIRoute = async ({ request, redirect, locals }) => {
   const fd = await request.formData();
   const studentId = String(fd.get('student_id'));
   const type = (String(fd.get('type') || 'semester') as 'exam' | 'semester' | 'year');
   const semester = fd.get('semester') ? String(fd.get('semester')) : undefined;
   const examId = fd.get('exam_id') ? String(fd.get('exam_id')) : undefined;
 
-  const student = getStudent(studentId);
+  const db = await getDb({ locals } as any);
+  await ensureSchema(db);
+
+  const student = await getStudent(db, studentId);
   if (!student) return new Response('student not found', { status: 404 });
 
-  // 取成绩
-  let scores = listScoresForStudent(studentId);
+  let scores = await listScoresForStudent(db, studentId);
   if (semester) scores = scores.filter((s) => s.semester === semester);
   if (examId) scores = scores.filter((s) => s.exam_id === examId);
   if (!scores.length) {
@@ -23,7 +25,7 @@ export const POST: APIRoute = async ({ request, redirect }) => {
   const targetSemester = semester ?? scores.at(-1)!.semester;
   try {
     const r = await generateComment({ student, scores, semester: targetSemester, type });
-    saveComment({
+    await saveComment(db, {
       student_id: studentId,
       exam_id: examId ?? null,
       semester: targetSemester,

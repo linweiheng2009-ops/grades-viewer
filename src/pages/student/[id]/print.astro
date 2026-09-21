@@ -1,15 +1,17 @@
 ---
-import { getStudent, listScoresForStudent, listExams, listComments } from '../../../lib/repo';
+import { getStudent, listScoresForStudent, listExams, listComments, getDb, ensureSchema } from '../../../lib/repo';
 import TrendChart from '../../../components/TrendChart.astro';
 import RadarChart from '../../../components/RadarChart.astro';
 
+const db = await getDb(Astro);
+await ensureSchema(db);
 const { id } = Astro.params;
-const student = id ? getStudent(id) : undefined;
+const student = id ? await getStudent(db, id) : null;
 if (!student) return Astro.redirect('/');
 
-const exams = listExams(student.id);
-const scores = listScoresForStudent(student.id);
-const comments = listComments(student.id);
+const exams = await listExams(db, student.id);
+const scores = await listScoresForStudent(db, student.id);
+const comments = await listComments(db, student.id);
 
 const subjects = Array.from(new Set(scores.map((s) => s.subject))).sort();
 const semesters = Array.from(new Set(scores.map((s) => s.semester))).sort();
@@ -82,7 +84,7 @@ for (const sub of subjects) {
     )}
 
     <div class="footer">
-      成绩看板 · 本地版 · 共 {exams.length} 次考试 · {scores.length} 条科目分数
+      成绩看板 · Cloudflare Pages + D1 版 · 共 {exams.length} 次考试 · {scores.length} 条科目分数
     </div>
 
     <script>setTimeout(() => window.print(), 300);</script>

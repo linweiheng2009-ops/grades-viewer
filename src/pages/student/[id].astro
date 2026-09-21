@@ -1,18 +1,21 @@
 ---
 import Base from '../../layouts/Base.astro';
-import { getStudent, listScoresForStudent, listExams, listComments, predictNext } from '../../lib/repo';
+import {
+  getStudent, listScoresForStudent, listExams, listComments,
+  predictNext, getDb, ensureSchema,
+} from '../../lib/repo';
 import TrendChart from '../../components/TrendChart.astro';
 import RadarChart from '../../components/RadarChart.astro';
 
+const db = await getDb(Astro);
+await ensureSchema(db);
 const { id } = Astro.params;
-const student = id ? getStudent(id) : undefined;
-if (!student) {
-  return Astro.redirect('/');
-}
+const student = id ? await getStudent(db, id) : null;
+if (!student) return Astro.redirect('/');
 
-const exams = listExams(student.id);
-const scores = listScoresForStudent(student.id);
-const comments = listComments(student.id);
+const exams = await listExams(db, student.id);
+const scores = await listScoresForStudent(db, student.id);
+const comments = await listComments(db, student.id);
 const url = new URL(Astro.request.url);
 const imported = url.searchParams.get('imported');
 const commented = url.searchParams.get('commented');
@@ -37,7 +40,7 @@ const predictions = predictNext(scores, 3);
       <h1 style="margin:0;">{student.name}</h1>
       <div class="muted">{student.grade ?? '—'} · {student.school ?? '未填学校'}</div>
     </div>
-    <div style="margin-left:auto;display:flex;gap:8px;">
+    <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">
       <a href={`/student/${student.id}/print`} target="_blank" class="card" style="padding:8px 12px;font-size:13px;">🖨 导出 PDF</a>
       <a href="/import" class="card" style="padding:8px 12px;font-size:13px;">📥 导入成绩</a>
       <form method="post" action="/api/student" onsubmit="return confirm('确认删除这个学生及其所有成绩?')" style="display:inline;">

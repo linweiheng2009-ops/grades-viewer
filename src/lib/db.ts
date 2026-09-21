@@ -1,97 +1,49 @@
-import Database from 'better-sqlite3';
-import { mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+// 双模式 DB 抽象:
+// - 生产 (CF Pages): 通过 Astro.locals.runtime.env.DB (D1 binding) 提供 D1Database
+// - 本地开发: 用 wrangler pages dev 跑时同样注入; 或 npm run dev:local 走 better-sqlite3
+// 仓库层(repo.ts)统一只调 sql() 接口,屏蔽差异
 
-// 数据文件存到项目根的 data/grades.db,首次访问自动建表
-const DB_PATH = resolve(process.cwd(), 'data/grades.db');
-mkdirSync(dirname(DB_PATH), { recursive: true });
+export interface DB {
+  prepare(sql: string): D1Prepared;
+  exec(sql: string): Promise<void> | void;
+  batch?(stmts: D1Prepared[]): Promise<any>;
+}
+export interface D1Prepared {
+  bind(...args: any[]): D1Prepared;
+  all<T = any>(): Promise<{ results: T[] }>;
+  first<T = any>(): Promise<T | null>;
+  run(): Promise<{ success: boolean; meta: any }>;
+}
 
-const db = new Database(DB_PATH);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+// D1 binding (CF Pages / wrangler dev)
+export function fromD1(d1: any): DB {
+  return d1 as DB;
+}
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS students (
-    id            TEXT PRIMARY KEY,
-    name          TEXT NOT NULL,
-    birth_date    TEXT,
-    grade         TEXT,
-    school        TEXT,
-    avatar        TEXT,
-    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS exams (
-    id            TEXT PRIMARY KEY,
-    student_id    TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
-    date          TEXT NOT NULL,
-    type          TEXT NOT NULL CHECK(type IN ('midterm','final','monthly','quiz')),
-    semester      TEXT NOT NULL,
-    total_score   REAL,
-    class_rank    INTEGER,
-    grade_rank    INTEGER,
-    class_size    INTEGER,
-    grade_size    INTEGER,
-    notes         TEXT,
-    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-  CREATE INDEX IF NOT EXISTS idx_exams_student ON exams(student_id, date);
-
-  CREATE TABLE IF NOT EXISTS subject_scores (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    exam_id       TEXT NOT NULL REFERENCES exams(id) ON DELETE CASCADE,
-    subject       TEXT NOT NULL,
-    score         REAL NOT NULL,
-    full_score    REAL NOT NULL,
-    class_rank    INTEGER,
-    grade_rank    INTEGER
-  );
-  CREATE INDEX IF NOT EXISTS idx_scores_exam ON subject_scores(exam_id);
-  CREATE INDEX IF NOT EXISTS idx_scores_subject ON subject_scores(subject);
-
-  CREATE TABLE IF NOT EXISTS ai_comments (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    student_id    TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
-    exam_id       TEXT REFERENCES exams(id) ON DELETE SET NULL,
-    semester      TEXT,
-    type          TEXT NOT NULL CHECK(type IN ('exam','semester','year')),
-    content       TEXT NOT NULL,
-    cost_usd      REAL,
-    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-  CREATE INDEX IF NOT EXISTS idx_comments_student ON ai_comments(student_id, created_at);
-`);
-
-export default db;
-export type Student = {
-  id: string;
-  name: string;
-  birth_date: string | null;
-  grade: string | null;
-  school: string | null;
-  avatar: string | null;
-  created_at: string;
-};
-export type Exam = {
-  id: string;
-  student_id: string;
-  date: string;
-  type: 'midterm' | 'final' | 'monthly' | 'quiz';
-  semester: string;
-  total_score: number | null;
-  class_rank: number | null;
-  grade_rank: number | null;
-  class_size: number | null;
-  grade_size: number | null;
-  notes: string | null;
-  created_at: string;
-};
-export type SubjectScore = {
-  id: number;
-  exam_id: string;
-  subject: string;
-  score: number;
-  full_score: number;
-  class_rank: number | null;
-  grade_rank: number | null;
-};
+// better-sqlite3 兼容层 (本地直跑 node server,或测试用)
+export function fromSqlite(sqlite: any): DB {
+  return {
+    prepare: (sql: string) => {
+      const stmt = sqlite.prepare(sql);
+      const bound: any = {
+        bind: (...args: any[]) => {
+          bound._args = args;
+          return bound;
+        },
+        all: async () => ({ results: stmt.all(...(bound._args ?? [])) }),
+        first: async () => stmt.get(...(bound._args ?? [])) ?? null,
+        run: async () => {
+          const r = stmt.run(...(bound._args ?? []));
+          return { success: true, meta: r };
+        },
+      };
+      return bound;
+    },
+    exec: (sql: string) => {
+      sqlite.exec(sql);
+    },
+    batch: async (stmts: D1Prepared[]) => {
+      for (const s of stmts) await s.run();
+    },
+  };
+}

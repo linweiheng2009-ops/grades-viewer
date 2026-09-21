@@ -1,26 +1,29 @@
 ---
 import Base from '../layouts/Base.astro';
-import { listStudents, listScoresForStudent } from '../lib/repo';
-import db from '../lib/db';
-
-const students = listStudents();
+import { listStudents, listScoresForStudent, getDb, ensureSchema } from '../lib/repo';
 const url = new URL(Astro.request.url);
 const justCreated = url.searchParams.get('created');
 
-// 全局统计
-const totalExams = (db.prepare('SELECT COUNT(*) AS n FROM exams').get() as any).n;
-const totalScores = (db.prepare('SELECT COUNT(*) AS n FROM subject_scores').get() as any).n;
-const totalComments = (db.prepare('SELECT COUNT(*) AS n FROM ai_comments').get() as any).n;
-const lastImport = (db.prepare("SELECT MAX(created_at) AS d FROM exams").get() as any).d;
+const db = await getDb(Astro);
+await ensureSchema(db);
 
-// 每个学生的统计
+const students = await listStudents(db);
+const totalExams = (await db.prepare('SELECT COUNT(*) AS n FROM exams').first<any>())?.n ?? 0;
+const totalScores = (await db.prepare('SELECT COUNT(*) AS n FROM subject_scores').first<any>())?.n ?? 0;
+const totalComments = (await db.prepare('SELECT COUNT(*) AS n FROM ai_comments').first<any>())?.n ?? 0;
+const lastImport = (await db.prepare("SELECT MAX(created_at) AS d FROM exams").first<any>())?.d ?? null;
+const globalAvg = (() => {
+  if (!totalScores) return null;
+  const r = db.prepare('SELECT AVG(score) AS a FROM subject_scores').first<any>();
+  return r ? Math.round((r.a ?? 0) as number) : null;
+})();
+
 type Row = {
   id: string; name: string; avatar: string | null; grade: string | null; school: string | null;
-  examCount: number; avgScore: number | null; latestDate: string | null;
-  trend: number | null; // 最近 vs 上一次,正进步
+  examCount: number; avgScore: number | null; latestDate: string | null; trend: number | null;
 };
-const studentRows: Row[] = students.map((s) => {
-  const scores = listScoresForStudent(s.id);
+const studentRows: Row[] = await Promise.all(students.map(async (s) => {
+  const scores = await listScoresForStudent(db, s.id);
   const examCount = new Set(scores.map((x) => x.date)).size;
   const all = scores.map((x) => x.score);
   const avgScore = all.length ? Math.round(all.reduce((a, b) => a + b, 0) / all.length) : null;
@@ -37,14 +40,7 @@ const studentRows: Row[] = students.map((s) => {
   }
   return { id: s.id, name: s.name, avatar: s.avatar, grade: s.grade, school: s.school,
            examCount, avgScore, latestDate: latest, trend };
-});
-
-// 全局平均
-const globalAvg = (() => {
-  if (!totalScores) return null;
-  const r = db.prepare('SELECT AVG(score) AS a FROM subject_scores').get() as any;
-  return Math.round(r.a);
-})();
+}));
 ---
 <Base title="成绩看板" active="home">
   {justCreated && (
@@ -53,7 +49,6 @@ const globalAvg = (() => {
     </div>
   )}
 
-  {/* 4 张统计卡 */}
   <div class="stat-grid">
     <div class="card stat-card">
       <div class="stat-label">学生</div>
@@ -84,7 +79,7 @@ const globalAvg = (() => {
   {students.length === 0 ? (
     <div class="card" style="text-align:center;padding:48px 24px;">
       <p style="font-size:18px;margin:0 0 12px;">还没有学生</p>
-      <p class="muted" style="margin:0 0 20px;">先添加一个学生，然后导入成绩 CSV 即可生成趋势看板。</p>
+      <p class="muted" style="margin:0 0 20px;">先添加一个学生,然后导入成绩 CSV 即可生成趋势看板。</p>
     </div>
   ) : (
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;margin-bottom:32px;">
@@ -123,7 +118,7 @@ const globalAvg = (() => {
       <label>头像 emoji<input name="avatar" placeholder="🧒" maxlength="4" /></label>
       <label style="grid-column:1/-1;display:flex;gap:8px;align-items:center;">
         <button type="submit">添加</button>
-        <span class="muted">本地存储,不上传任何服务器</span>
+        <span class="muted">数据存 D1 (云端 SQLite)</span>
       </label>
     </form>
   </div>
